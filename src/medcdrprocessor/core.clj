@@ -45,6 +45,8 @@
 
 (defn- check-float [val]
   (if (empty? val) 0.0 val))
+(defn- check-int [val]
+  (if (empty? val) 0 val))
 ;CREATE TABLE public.tbl_tmp_reco_loan_cdrs_20191105 PARTITION OF public.tbl_tmp_reco_loan_cdrs
 ;    FOR VALUES FROM ('2019-11-05 00:00:00+01') TO ('2019-11-06 00:00:00+01');
 (defn parse-text [from tempfile fname]
@@ -57,16 +59,17 @@
            (with-open [writer (io/writer tempfile)]
              (doall
                (->> (csv/read-csv reader :separator \>)
-                    (map #(list (nth % 0 nil) (nth % 1 nil) (nth % 2 nil) (nth % 4 nil) (nth % 5 nil) (nth % 6 nil)
-                                (nth % 7 nil)
-                                (-> (f/formatter "yyyyMMddHHmmss")
+                    (map #(list (nth % 0 nil) (nth % 1 nil) (nth % 2 nil) (nth % 4 nil) (check-int (nth % 5 nil))
+                                (check-float (nth % 6 nil))
+                                (check-float (nth % 7 nil)) (nth % 8 nil) (nth % 9 nil)
+                                #_(-> (f/formatter "yyyyMMddHHmmss")
                                     (f/parse (str (nth % 8 nil) (nth % 9 nil)))
                                     (l/format-local-time :mysql)
                                     (try (catch Exception _ nil)))
                                 (nth % 10 nil) (nth % 11 nil) (nth % 12 nil)
                                 (nth % 13 nil) (nth % 14 nil) (nth % 15 nil) (nth % 16 nil) (nth % 17 nil) (nth % 18 nil)
-                                (nth % 19 nil) (nth % 20 nil) (nth % 21 nil) (nth % 22 nil) (nth % 25 nil) (nth % 27 nil)
-                                (nth % 28 nil) fname (nth % 8 nil) (nth % 9 nil)))
+                                (nth % 19 nil) (nth % 20 nil) (nth % 21 nil) (check-float (nth % 22 nil)) (check-float (nth % 25 nil)) (nth % 27 nil)
+                                (nth % 28 nil) fname ))
                     (csv/write-csv writer))))
            :da)
       ;;refillMA
@@ -75,13 +78,15 @@
              (doall
                (->> (csv/read-csv reader :separator \>)
                     (map #(list (nth % 0 nil) (nth % 1 nil) (nth % 3 nil) (nth % 5 nil)
-                                (-> (f/formatter "yyyyMMddHHmmss")
+                                (nth % 6 nil) (nth % 7 nil)
+                                #_(-> (f/formatter "yyyyMMddHHmmss")
                                     (f/parse (str (nth % 6 nil) (nth % 7 nil)))
                                     (l/format-local-time :mysql)
-                                    (try (catch Exception _ nil))) (nth % 8 nil)
-                                (nth % 9 nil) (nth % 12 nil) (nth % 13 nil) (nth % 15 nil) (nth % 16 nil) (nth % 17 nil) (nth % 18 nil)
-                                (nth % 19 nil) (nth % 20 nil) (nth % 21 nil) (nth % 22 nil) (nth % 32 nil) (nth % 33 nil)
-                                (nth % 35 nil) (nth % 36 nil) (nth % 45 nil) fname (nth % 6 nil) (nth % 7 nil)))
+                                    (try (catch Exception _ nil)))
+                                (nth % 8 nil)
+                                (nth % 9 nil) (check-float (nth % 12 nil)) (nth % 13 nil) (check-float (nth % 15 nil)) (check-int (nth % 16 nil)) (nth % 17 nil) (nth % 18 nil)
+                                (nth % 19 nil) (check-float (nth % 20 nil)) (nth % 21 nil) (check-float (nth % 22 nil)) (nth % 32 nil) (nth % 33 nil)
+                                (nth % 35 nil) (check-int (nth % 36 nil)) (nth % 45 nil) fname))
                     (csv/write-csv writer))))
            :ma)
       (log/errorf "Unknown file data" from))))
@@ -136,14 +141,14 @@
                                         (str " ( "
                                              (str/join ", " (map (fn [col] (col->str col entities)) columns))
                                              " )"))
-                                      " VALUES (?,?,?,?,?,?,?,?::timestamp,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")]
+                                      " VALUES (?,?,?,?,?::int,?::real,?::real,?::date,?,?,?,?,?,?,?,?,?,?,?,?,?,?::real,?::real,?,?,?)")]
                                 newdata)
          (= type :ma) (into [(str "INSERT INTO " (table->str table entities)
                                    (when (seq columns)
                                      (str " ( "
                                           (str/join ", " (map (fn [col] (col->str col entities)) columns))
                                           " )"))
-                                   " VALUES (?,?,?,?,?::timestamp,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")]
+                                   " VALUES (?,?,?,?,?::date,?,?,?,?::real,?,?::real,?::int,?,?,?,?,?::real,?::real,?,?,?,?::int,?,?)")]
                              newdata)))))
 
 (defn- insert-cols
@@ -174,31 +179,30 @@
                      :tbl_air_refill_da
                      [:origin_node_type :origin_host_name :origin_transaction_id
                       :da_ua_type :da_ua_id :da_ua_account_balance_before :da_ua_account_balance_after
-                      :transaction_start_date_time :current_service_class
+                      :transaction_start_date :transaction_start_time :current_service_class
                       :voucher_based_refill :transaction_type :transaction_code :transaction_currency
                       :refill_type :voucher_serial_number :voucher_group_id :subscriber_number
                       :account_number :external_data1 :external_data2
                       :refill_division_amount :dedicated_account_unit :account_expiry_date :primary_recharge_account_id
-                      :filename :transaction_start_date :transaction_start_time]
+                      :filename]
                      array
                      {:tempfile tempfile}
                      :da)
     :ma (insert-cols {:datasource @ds}                      ;
                      :tbl_air_refill_ma
                      [:origin_node_type :origin_host_name :origin_transaction_id :host_name
-                      :transaction_start_date_time :current_service_class :voucher_based_refill
+                      :transaction_start_date :transaction_start_time :current_service_class :voucher_based_refill
                       :transaction_amount :transaction_currency :refill_division_amount
                       :refill_type :voucher_serial_number :voucher_group_key :account_number :subscriber_number
                       :account_balance_before :account_balance_after :external_data1 :external_data2
                       :cell_identifier :primary_recharge_account_id :location_number
-                      :filename :transaction_start_date :transaction_start_time]
+                      :filename]
+
                      array
                      {:tempfile tempfile}
                      :ma)
     (throw (Exception. (format "cdr type (expected=[da ma], found=%s)" file-cdr-type))))
-  (io/delete-file (io/as-file tempfile))
-  )
-
+  (io/delete-file (io/as-file tempfile)))
 
 (defn text->map
   "Parses file and returns a maplist"
