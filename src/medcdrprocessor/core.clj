@@ -15,16 +15,6 @@
   (:import (java.io File)))
 
 
-#_(defonce my-executor
-         (let [executor-svc (Executors/newFixedThreadPool
-                              1
-                              (conc/counted-thread-factory "async-dispatch-%d" true))]
-           (reify protocols/Executor
-             (protocols/exec [this r]
-               (.execute executor-svc ^Runnable r)))))
-
-#_(alter-var-root #'clojure.core.async.impl.dispatch/executor
-                (constantly (delay my-executor)))
 
 (def databaseInfo (atom {}))
 
@@ -42,6 +32,13 @@
                       :port-number (:dbport @databaseInfo)})))
 
 
+(defn filterlist [data]
+  (when (or (= "DA130" (str (nth data 3) (nth data 4)))
+            (= "DA135" (str (nth data 3) (nth data 4))))
+    (list (nth data 0) (nth data 1) (nth data 2) (nth data 3) (nth data 4) (nth data 5) (nth data 6) (nth data 7)
+          (nth data 8) (nth data 9) (nth data 10) (nth data 11)
+          (nth data 12) (nth data 13) (nth data 14) (nth data 15) (nth data 16) (nth data 17) (nth data 18) (nth data 19)
+          (nth data 20) (nth data 21) (nth data 22) (nth data 23) (nth data 24) (nth data 25))))
 
 (defn- check-float [val]
   (if (empty? val) 0.0 val))
@@ -59,17 +56,17 @@
            (with-open [writer (io/writer tempfile)]
              (doall
                (->> (csv/read-csv reader :separator \>)
-                    (map #(list (nth % 0 nil) (nth % 1 nil) (nth % 2 nil) (nth % 4 nil) (check-int (nth % 5 nil))
-                                (check-float (nth % 6 nil))
-                                (check-float (nth % 7 nil)) (nth % 8 nil) (nth % 9 nil)
-                                #_(-> (f/formatter "yyyyMMddHHmmss")
-                                    (f/parse (str (nth % 8 nil) (nth % 9 nil)))
-                                    (l/format-local-time :mysql)
-                                    (try (catch Exception _ nil)))
-                                (nth % 10 nil) (nth % 11 nil) (nth % 12 nil)
-                                (nth % 13 nil) (nth % 14 nil) (nth % 15 nil) (nth % 16 nil) (nth % 17 nil) (nth % 18 nil)
-                                (nth % 19 nil) (nth % 20 nil) (nth % 21 nil) (check-float (nth % 22 nil)) (check-float (nth % 25 nil)) (nth % 27 nil)
-                                (nth % 28 nil) fname ))
+                    (map #(filterlist [(nth % 0 nil) (nth % 1 nil) (nth % 2 nil) (nth % 4 nil) (check-int (nth % 5 nil))
+                                       (check-float (nth % 6 nil))
+                                       (check-float (nth % 7 nil)) (nth % 8 nil) (nth % 9 nil)
+                                       #_(-> (f/formatter "yyyyMMddHHmmss")
+                                             (f/parse (str (nth % 8 nil) (nth % 9 nil)))
+                                             (l/format-local-time :mysql)
+                                             (try (catch Exception _ nil)))
+                                       (nth % 10 nil) (nth % 11 nil) (nth % 12 nil)
+                                       (nth % 13 nil) (nth % 14 nil) (nth % 15 nil) (nth % 16 nil) (nth % 17 nil) (nth % 18 nil)
+                                       (nth % 19 nil) (nth % 20 nil) (nth % 21 nil) (check-float (nth % 22 nil)) (check-float (nth % 25 nil)) (nth % 27 nil)
+                                       (nth % 28 nil) fname]))
                     (csv/write-csv writer))))
            :da)
       ;;refillMA
@@ -120,7 +117,7 @@
       res
       (if (or (not (= (count b) col-count)) (empty? (get b line)))
         (do
-          (log/errorf "inconsistent number of columns, value=%s" b)
+          ;(log/errorf "inconsistent number of columns, value=%s" b)
           (recur (first c) (rest c) res))
         (recur (first c) (rest c) (conj res b))))))
 
@@ -219,7 +216,7 @@
     ;(log/info "streamarray" (count col) "====" vcs)
     ;;remove header
     (insert-stream (rest streamarray) tempfile file-cdr-type)
-   #_((->> (rest streamarray)
+    #_((->> (rest streamarray)
          (partition 10000)
          (map (fn [batch] (insert-stream batch tempfile file-cdr-type)))
          (dorun))
