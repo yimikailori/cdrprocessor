@@ -19,11 +19,11 @@
 (def databaseInfo (atom {}))
 
 (def ds (delay (hikari/make-datasource
-                     {:connection-timeout 30000
-                      :idle-timeout 600000
-                      :max-lifetime 1800000
+                     {:connection-timeout 10000
+                      :idle-timeout 300000
+                      :max-lifetime 900000
                       :minimum-idle 10
-                      :maximum-pool-size  10
+                      :maximum-pool-size  (:max-pool-size @databaseInfo)
                       :adapter "postgresql"
                       :username (:username @databaseInfo)
                       :password (:password @databaseInfo)
@@ -49,13 +49,19 @@
 (defn parse-text [from tempfile fname]
   "Convert a text into rows of columns"
   (let [reader (io/reader from)
-        datacount (count (first (csv/read-csv reader :separator \>)))]
+        dataread (csv/read-csv reader :separator \>)
+        datacount (count (first dataread))
+        parsedata (if (< (count (last dataread)) 24)
+                    (do
+                        (log/infof "Clean last streamarray with unknown number of column %s|%s" (last dataread) tempfile )
+                        (into [] (remove #{(last dataread)} dataread)))
+                    dataread)]
     (condp = datacount
       ;refillDA
       51 (do
            (with-open [writer (io/writer tempfile)]
              (doall
-               (->> (csv/read-csv reader :separator \>)
+               (->> parsedata
                     (map #(filterlist [(nth % 0 nil) (nth % 1 nil) (nth % 2 nil) (nth % 4 nil) (check-int (nth % 5 nil))
                                        (check-float (nth % 6 nil))
                                        (check-float (nth % 7 nil)) (nth % 8 nil) (nth % 9 nil)
@@ -73,7 +79,7 @@
       46 (do
            (with-open [writer (io/writer tempfile)]
              (doall
-               (->> (csv/read-csv reader :separator \>)
+               (->> parsedata
                     (map #(list (nth % 0 nil) (nth % 1 nil) (nth % 3 nil) (nth % 5 nil)
                                 (nth % 6 nil) (nth % 7 nil)
                                 #_(-> (f/formatter "yyyyMMddHHmmss")
@@ -129,7 +135,7 @@
     (let [nc (count columns)
           ;vcs (map count values)
           line (if (= type :da) 7 4)
-          _ (log/debugf "%s count of columns=%s||first count of values=%s <=line %s"type nc (count (first values)) line)
+          _ (log/debugf "%s count of columns=%s||first count of values=%s||last count of values=%s||line %s"type nc (count (first values)) (count (last values)) line)
           newdata (clean-data values nc line)]
       (when (not (empty? newdata))
         (log/infof "inserting data %s" [table entities type])
@@ -194,7 +200,6 @@
                       :account_balance_before :account_balance_after :external_data1 :external_data2
                       :cell_identifier :primary_recharge_account_id :location_number
                       :filename]
-
                      array
                      {:tempfile tempfile}
                      :ma)
@@ -213,9 +218,12 @@
         streamarray (map #(str/split % #",")
                          (str/split-lines fstream))]
 
-    ;(log/info "streamarray" (count col) "====" vcs)
-    ;;remove header
-    (insert-stream (rest streamarray) tempfile file-cdr-type)
+      ;;remove header
+    (if (> (count streamarray) 0)
+        (do
+            (insert-stream streamarray tempfile file-cdr-type)
+            (log/infof "File uploaded now cleaning [%s]"tempfile))
+        (log/errorf "File count is zero [%s|%s]" tempfile (first (rest streamarray))))
     #_((->> (rest streamarray)
          (partition 10000)
          (map (fn [batch] (insert-stream batch tempfile file-cdr-type)))
