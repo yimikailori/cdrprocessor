@@ -14,7 +14,7 @@ Check project.clj on other classpath
 
 FIXME: explanation
 
-    $ java -jar -Dclojure.core.async.pool-size=24 medcdrprocessor-0.1.0-standalone.jar [args]
+    $ java -jar -Dclojure.core.async.pool-size=24 -Dmedconfig=./medcdr.conf target/uberjar/medcdrprocessor.jar [args]
 
 ## Options
 

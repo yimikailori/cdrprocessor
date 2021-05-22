@@ -55,7 +55,8 @@
                     (do
                         (log/infof "Clean last streamarray with unknown number of column %s|%s" (last dataread) tempfile )
                         (into [] (remove #{(last dataread)} dataread)))
-                    dataread)]
+                    dataread)
+        _ (log/infof "Parsing data into [%s|%s]"tempfile (first parsedata))]
     (condp = datacount
       ;refillDA
       51 (do
@@ -221,7 +222,8 @@
       ;;remove header
     (if (> (count streamarray) 0)
         (do
-            (insert-stream streamarray tempfile file-cdr-type)
+            (log/infof "Insert stream file [%s]"tempfile)
+            (insert-stream (rest streamarray) tempfile file-cdr-type)
             (log/infof "File uploaded now cleaning [%s]"tempfile))
         (log/errorf "File count is zero [%s|%s]" tempfile (first (rest streamarray))))
     #_((->> (rest streamarray)
@@ -237,7 +239,8 @@
 (defn processfile [event filename tempdir archivedir]
   (when (str/ends-with? (.getName filename) "csv")
     (log/info event filename)
-    (async/go (utils/with-func-timed "processFile" filename (text->map filename tempdir archivedir)))))
+      (utils/with-func-timed "processFile" filename
+          (text->map filename tempdir archivedir))))
 
 (defn -main
   [& args]
@@ -255,9 +258,9 @@
                                                     nx (drop 2 files)]
                                                (when-not (nil? n)
                                                  ;(log/info "=>>"n "=="nx)
-                                                 (processfile :initial n tempdir archivedir)
+                                                 (async/go (processfile :initial n tempdir archivedir))
                                                  (recur (first nx) (rest nx))))))
-                   :callback    (fn [event filename] (processfile event (io/as-file filename) tempdir archivedir))
+                   :callback    (fn [event filename] (future (processfile event (io/as-file filename) tempdir archivedir)))
                    :options     {:recursive false}}])))
 
 
