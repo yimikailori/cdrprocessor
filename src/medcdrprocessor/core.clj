@@ -10,9 +10,9 @@
             [clojure.java.jdbc :as jdbc]
             [clojure.data.csv :as csv]
             [hikari-cp.core :as hikari]
-
             [clojure.core.async :as async])
-  (:import (java.io File)))
+    (:import (java.io File)
+             (java.util Timer TimerTask Date)))
 
 
 
@@ -140,20 +140,20 @@
           newdata (clean-data values nc line)]
       (when (not (empty? newdata))
         (log/infof "inserting data %s" [table entities type])
-       (cond (= type :da)(into [(str "INSERT INTO " (table->str table entities)
+          (cond (= type :da)(into [(str "INSERT INTO " (table->str table entities)
                                       (when (seq columns)
-                                        (str " ( "
-                                             (str/join ", " (map (fn [col] (col->str col entities)) columns))
-                                             " )"))
-                                      " VALUES (?,?,?,?,?::int,?::real,?::real,?::date,?,?,?,?,?,?,?,?,?,?,?,?,?,?::real,?::real,?,?,?)")]
+                                          (str " ( "
+                                              (str/join ", " (map (fn [col] (col->str col entities)) columns))
+                                              " )"))
+                                       " VALUES (?,?,?,?,?::int,?::real,?::real,?::date,?,?,?,?,?,?,?,?,?,?,?,?,?,?::real,?::real,?,?,?)")]
                                 newdata)
-         (= type :ma) (into [(str "INSERT INTO " (table->str table entities)
-                                   (when (seq columns)
+              (= type :ma) (into [(str "INSERT INTO " (table->str table entities)
+                                 (when (seq columns)
                                      (str " ( "
-                                          (str/join ", " (map (fn [col] (col->str col entities)) columns))
-                                          " )"))
-                                   " VALUES (?,?,?,?,?::date,?,?,?,?::real,?,?::real,?::int,?,?,?,?,?::real,?::real,?,?,?,?::int,?,?)")]
-                             newdata)))))
+                                         (str/join ", " (map (fn [col] (col->str col entities)) columns))
+                                         " )"))
+                                 " VALUES (?,?,?,?,?::date,?,?,?,?::real,?,?::real,?::int,?,?,?,?,?::real,?::real,?,?,?,?::int,?,?)")]
+                          newdata)))))
 
 (defn- insert-cols
   "Given a database connection, a table name, a sequence of columns names, a
@@ -165,13 +165,15 @@
         (merge {:entities identity :transaction? true} (when (map? db) db) opts)
         sql-params (insert-multi-row table cols values entities type)]
     ;(log/infof "sql-params=%s" sql-params)
-    (if (jdbc/db-find-connection db)
-      (jdbc/db-do-prepared db transaction? sql-params (assoc opts :multi? true))
-      (doall
-        (with-open [con (jdbc/get-connection db opts)]
-          (jdbc/db-do-prepared (jdbc/add-connection db con) transaction? sql-params
+    (if-not (nil? sql-params)
+        (if (jdbc/db-find-connection db)
+            (jdbc/db-do-prepared db transaction? sql-params (assoc opts :multi? true))
+            (doall
+                (with-open [con (jdbc/get-connection db opts)]
+                    (jdbc/db-do-prepared (jdbc/add-connection db con) transaction? sql-params
                         (assoc opts :multi? true)))
-          (log/info "loadfile >>" tempfile)))))
+                (log/info "loadfile >>" tempfile)))
+        (log/warnf "No :da or :ma in file [%s]" tempfile))))
 
 ;(insert-cols db table cols-or-row [values-or-opts] {})
 
@@ -242,13 +244,70 @@
       (utils/with-func-timed "processFile" filename
           (text->map filename tempdir archivedir))))
 
+
+(defn cpartitions [data]
+    (let [{:keys [theyear startmonth endmonth]} data
+          start-month (str theyear "-"startmonth"-01 00:00:00")
+          end-month (str theyear "-"endmonth"-01 00:00:00")
+          partitions {:tbl_csdp_loans_cdrs_recon (str "tbl_csdp_recovery_cdrs_recon_"theyear startmonth)
+                    :tbl_csdp_recovery_cdrs_recon (str "tbl_csdp_loans_cdrs_recon_"theyear startmonth)}]
+        ;    CREATE TABLE public.tbl_csdp_recovery_cdrs_recon_202106 PARTITION OF
+        ;    public.tbl_csdp_recovery_cdrs_recon
+        ;    FOR VALUES FROM ('2021-06-01 00:00:00') TO ('2021-07-01 00:00:00');
+        (doseq [tablename ["tbl_csdp_recovery_cdrs_recon"
+                           "tbl_csdp_loans_cdrs_recon"]]
+            (let [partitiontable   ((keyword tablename) partitions)
+                  partition-exists (into {} (jdbc/query {:datasource @ds}
+                                                [(str "select exists (SELECT FROM information_schema.tables  WHERE  table_name   = '" partitiontable "')")]))
+                  ;_ (log/infof "partition-exists %s -> %s" partition-exists partitiontable)
+                  ]
+                (when-not (boolean (:exists partition-exists))
+                    (do
+                        (log/infof (str "Initializing: CREATE TABLE "partitiontable " PARTITION OF "tablename" FOR VALUES FROM ('"start-month"') TO ('"end-month"')"))
+                        (jdbc/execute! {:datasource @ds}
+                            [(str "CREATE TABLE "partitiontable " PARTITION OF "tablename" FOR VALUES FROM ('"start-month"') TO ('"end-month"'); GRANT select on " partitiontable " TO public;")]))
+                    )))))
+
+(defn- create-dbpartitions []
+    (try
+        (let [date (str/split (f/unparse
+                                  (f/formatters :date) (l/local-now)) #"-")
+              y (Integer/parseInt (first date))
+              m (Integer/parseInt (second date))
+              mm (second date)
+              d (Integer/parseInt (last date))
+              newm (if (< m 10)
+                       (str "0" (inc m))
+                       (str (inc m)))]
+            (do
+                (cpartitions {:theyear y :startmonth mm :endmonth (if (= m 12) "01" newm)})
+                (when (>= d 28)
+                    (let [[y sm em] (if (= m 12)
+                                        [(inc y) "01" "02"]
+                                        [y mm newm])]
+                        (log/infof "createPartitions(%s,%s,%s)" y sm em)
+                        (cpartitions {:theyear y :startmonth sm :endmonth em})))))
+        (catch Exception e
+            (log/error "cannotCreatePartitions() -> " (.getMessage e)))))
+
+(defn starttask []
+    (log/infof "Start create recon table partitions")
+    (doto (Timer. "recon-timer" false) ; Do not run as a daemon thread.
+        (.scheduleAtFixedRate (proxy [TimerTask] []
+                                  (run []
+                                      (create-dbpartitions)))
+            (Date.)
+            (long 21600))))
+
 (defn -main
   [& args]
-  (let [config (System/getProperty "medconfig")
+  (let [config        (System/getProperty "medconfig")
         configdetails (read-string (slurp config))
         {:keys [incomingdir tempdir archivedir dbinfo]} configdetails
-        _ (log/infof "Details [%s]" configdetails)
-        _ (reset! databaseInfo dbinfo)]
+        _             (log/infof "Details [%s]" configdetails)
+        _             (reset! databaseInfo dbinfo)
+        ;_ (starttask)
+        ]
     ;(watch-dir println (io/file path))
     (start-watch [{:path        incomingdir
                    :event-types [:create :modify]
