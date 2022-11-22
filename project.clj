@@ -7,17 +7,14 @@
                  ;; folder watcher.
                  ;[juxt/dirwatch "0.2.5"]
                  [clojure-watch "0.1.9"]
-
                  [org.clojure/core.async "1.1.587"]
                  [org.javassist/javassist "3.27.0-GA"]
-
                  ;; Data.
                  [org.clojure/data.csv "1.0.0"]
                  ;; Date/time.
                  ;[joda-time/joda-time "2.9.9"]
                  [clj-time "0.15.1"]
                  [org.apache.commons/commons-lang3 "3.5"]
-
                  [ch.qos.logback/logback-classic "1.3.0-alpha5"]
                  [org.clojure/tools.logging "1.0.0"]
                  [log4j/log4j "1.2.17" :exclusions [javax.mail/mail
